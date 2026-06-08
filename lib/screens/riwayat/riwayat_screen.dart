@@ -36,24 +36,60 @@ class _RiwayatScreenState extends ConsumerState<RiwayatScreen> {
       ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error:   (e, _) => ErrorView(
-          message: e.toString(),
-          onRetry: () => ref.invalidate(riwayatProvider(params)),
-        ),
+        error: (e, st) {
+          debugPrint('Riwayat error: $e\n$st');
+          return ErrorView(
+            message: e.toString(),
+            onRetry: () => ref.invalidate(riwayatProvider(params)),
+          );
+        },
         data: (data) {
-          final items = (data['items'] as List<dynamic>? ?? [])
-              .map((e) => FloodEvent.fromJson(e as Map<String, dynamic>))
-              .toList();
-          final stats  = RiwayatStats.fromJson(
-              (data['stats'] as Map<String, dynamic>?) ?? {});
-          final pages  = data['pages'] as int? ?? 1;
+          debugPrint('Riwayat raw data keys: ${data.keys.toList()}');
+
+          // ── Parsing items ──────────────────────────────────────────────
+          final rawItems = data['items'];
+          final List<FloodEvent> items;
+          if (rawItems is List) {
+            items = rawItems
+                .whereType<Map<String, dynamic>>()
+                .map((e) {
+                  try {
+                    return FloodEvent.fromJson(e);
+                  } catch (err) {
+                    debugPrint('FloodEvent parse error: $err | data: $e');
+                    return null;
+                  }
+                })
+                .whereType<FloodEvent>()
+                .toList();
+          } else {
+            items = [];
+          }
+
+          // ── Parsing stats ──────────────────────────────────────────────
+          final rawStats = data['stats'];
+          final RiwayatStats stats;
+          if (rawStats is Map<String, dynamic>) {
+            stats = RiwayatStats.fromJson(rawStats);
+          } else {
+            // Fallback: hitung dari total field jika stats tidak ada
+            stats = RiwayatStats(
+              totalKejadian: data['total'] as int? ?? 0,
+              totalSiaga:    0,
+              totalEvakuasi: 0,
+            );
+          }
+
+          final pages = data['pages'] as int? ?? 1;
+
+          debugPrint('Items parsed: ${items.length}, pages: $pages');
 
           return _RiwayatContent(
-            items:       items,
-            stats:       stats,
-            pages:       pages,
-            currentPage: _page,
-            levelFilter: _levelFilter,
+            items:          items,
+            stats:          stats,
+            pages:          pages,
+            currentPage:    _page,
+            levelFilter:    _levelFilter,
             onLevelChanged: (v) => setState(() { _levelFilter = v; _page = 1; }),
             onPageChanged:  (v) => setState(() => _page = v),
           );
@@ -63,6 +99,7 @@ class _RiwayatScreenState extends ConsumerState<RiwayatScreen> {
   }
 }
 
+// ── Content ───────────────────────────────────────────────────────────────────
 class _RiwayatContent extends StatelessWidget {
   final List<FloodEvent> items;
   final RiwayatStats     stats;
@@ -72,7 +109,7 @@ class _RiwayatContent extends StatelessWidget {
   final void Function(String) onLevelChanged;
   final void Function(int)    onPageChanged;
 
-  static const _levels = ['', 'WASPADA', 'SIAGA', 'EVAKUASI'];
+  static const _levels      = ['', 'WASPADA', 'SIAGA', 'EVAKUASI'];
   static const _levelLabels = {
     '':         'Semua',
     'WASPADA':  'Waspada',
@@ -95,13 +132,11 @@ class _RiwayatContent extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // ── Stats Row ─────────────────────────────────────────────────────
-        _StatsRow(stats: stats)
-          .animate().fadeIn(duration: 400.ms),
-
+        // ── Stats Row ──────────────────────────────────────────────────
+        _StatsRow(stats: stats).animate().fadeIn(duration: 400.ms),
         const SizedBox(height: 16),
 
-        // ── Filter chips ──────────────────────────────────────────────────
+        // ── Filter chips ───────────────────────────────────────────────
         SizedBox(
           height: 36,
           child: ListView.separated(
@@ -111,20 +146,24 @@ class _RiwayatContent extends StatelessWidget {
             itemBuilder: (_, i) {
               final lv     = _levels[i];
               final active = lv == levelFilter;
-              final color  = lv.isEmpty ? AppColors.primary : AlertColors.forLevel(lv);
+              final color  = lv.isEmpty
+                  ? AppColors.primary
+                  : AlertColors.forLevel(lv);
 
               return FilterChip(
                 label: Text(_levelLabels[lv] ?? lv),
                 selected: active,
                 onSelected: (_) => onLevelChanged(lv),
-                selectedColor: color.withValues(alpha: 0.15),
-                checkmarkColor: color,
+                selectedColor:   color.withValues(alpha: 0.15),
+                checkmarkColor:  color,
                 labelStyle: TextStyle(
-                  fontSize: 12,
+                  fontSize:   12,
                   fontWeight: FontWeight.w600,
-                  color: active ? color : AppColors.textSub,
+                  color:      active ? color : AppColors.textSub,
                 ),
-                side: BorderSide(color: active ? color : AppColors.border),
+                side: BorderSide(
+                  color: active ? color : AppColors.border,
+                ),
                 backgroundColor: AppColors.bgCard,
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 showCheckmark: false,
@@ -132,20 +171,31 @@ class _RiwayatContent extends StatelessWidget {
             },
           ),
         ),
-
         const SizedBox(height: 16),
 
-        // ── Timeline ──────────────────────────────────────────────────────
+        // ── Timeline / Empty ───────────────────────────────────────────
         if (items.isEmpty)
-          const SigapCard(
+          SigapCard(
             child: Padding(
-              padding: EdgeInsets.all(32),
+              padding: const EdgeInsets.all(32),
               child: Column(
                 children: [
-                  Icon(Icons.history_outlined, size: 40, color: AppColors.textMuted),
-                  SizedBox(height: 12),
-                  Text('Belum ada riwayat kejadian.',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                  const Icon(
+                    Icons.history_outlined,
+                    size: 40,
+                    color: AppColors.textMuted,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    levelFilter.isEmpty
+                        ? 'Belum ada riwayat kejadian.'
+                        : 'Tidak ada kejadian level $levelFilter.',
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 13,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                 ],
               ),
             ),
@@ -153,12 +203,12 @@ class _RiwayatContent extends StatelessWidget {
         else
           _Timeline(items: items),
 
-        // ── Pagination ────────────────────────────────────────────────────
+        // ── Pagination ──────────────────────────────────────────────────
         if (pages > 1) ...[
           const SizedBox(height: 16),
           _Pagination(
-            current: currentPage,
-            total:   pages,
+            current:   currentPage,
+            total:     pages,
             onChanged: onPageChanged,
           ),
         ],
@@ -232,7 +282,9 @@ class _StatBox extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             value,
-            style: AppText.mono(size: 24, weight: FontWeight.w700, color: color),
+            style: AppText.mono(
+              size: 24, weight: FontWeight.w700, color: color,
+            ),
           ),
         ],
       ),
@@ -249,14 +301,10 @@ class _Timeline extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: items.asMap().entries.map((e) {
-        final i     = e.key;
-        final event = e.value;
-        final isLast = i == items.length - 1;
-
         return _TimelineItem(
-          event:  event,
-          isLast: isLast,
-          delay:  Duration(milliseconds: 60 * i),
+          event:  e.value,
+          isLast: e.key == items.length - 1,
+          delay:  Duration(milliseconds: 60 * e.key),
         );
       }).toList(),
     );
@@ -300,24 +348,26 @@ class _TimelineItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Garis timeline ──────────────────────────────────────────────
+          // ── Garis timeline ────────────────────────────────────────────
           SizedBox(
             width: 32,
             child: Column(
               children: [
-                // Dot
                 Container(
                   width: 14, height: 14,
                   margin: const EdgeInsets.only(top: 18),
                   decoration: BoxDecoration(
-                    shape:       BoxShape.circle,
-                    color:       color,
+                    shape: BoxShape.circle,
+                    color: color,
                     boxShadow: [
-                      BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 6, spreadRadius: 1),
+                      BoxShadow(
+                        color:       color.withValues(alpha: 0.35),
+                        blurRadius:  6,
+                        spreadRadius: 1,
+                      ),
                     ],
                   ),
                 ),
-                // Garis vertikal
                 if (!isLast)
                   Expanded(
                     child: Container(
@@ -329,10 +379,9 @@ class _TimelineItem extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(width: 12),
 
-          // ── Kartu event ─────────────────────────────────────────────────
+          // ── Kartu event ───────────────────────────────────────────────
           Expanded(
             child: Padding(
               padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
@@ -340,7 +389,6 @@ class _TimelineItem extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Header
                     Row(
                       children: [
                         AlertBadge(level: event.maxLevel),
@@ -355,14 +403,12 @@ class _TimelineItem extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
 
-                    // Waktu mulai
                     _InfoRow(
                       icon:  Icons.play_circle_outline,
                       label: 'Mulai',
                       value: _formatTanggal(event.startedAt),
                     ),
 
-                    // Waktu selesai
                     if (event.endedAt != null) ...[
                       const SizedBox(height: 4),
                       _InfoRow(
@@ -374,13 +420,16 @@ class _TimelineItem extends StatelessWidget {
 
                     const SizedBox(height: 8),
 
-                    // Durasi badge
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5,
+                      ),
                       decoration: BoxDecoration(
-                        color: bg,
+                        color:        bg,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: color.withValues(alpha: 0.2)),
+                        border:       Border.all(
+                          color: color.withValues(alpha: 0.2),
+                        ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -390,20 +439,22 @@ class _TimelineItem extends StatelessWidget {
                           Text(
                             'Durasi: ${_formatDurasi(event.durationMinutes)}',
                             style: TextStyle(
-                              fontSize: 12, color: color, fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                              color: color,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       ),
                     ),
 
-                    // Catatan
                     if (event.notes != null && event.notes!.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Text(
                         event.notes!,
                         style: const TextStyle(
-                          fontSize: 12, color: AppColors.textSub,
+                          fontSize: 12,
+                          color: AppColors.textSub,
                           fontStyle: FontStyle.italic,
                         ),
                       ),
@@ -424,7 +475,11 @@ class _InfoRow extends StatelessWidget {
   final String   label;
   final String   value;
 
-  const _InfoRow({required this.icon, required this.label, required this.value});
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -434,8 +489,10 @@ class _InfoRow extends StatelessWidget {
         const SizedBox(width: 6),
         Text('$label: ', style: AppText.label(size: 11)),
         Expanded(
-          child: Text(value,
-            style: const TextStyle(fontSize: 12, color: AppColors.textSub)),
+          child: Text(
+            value,
+            style: const TextStyle(fontSize: 12, color: AppColors.textSub),
+          ),
         ),
       ],
     );
@@ -467,9 +524,9 @@ class _Pagination extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           decoration: BoxDecoration(
-            color: AppColors.bgCard,
+            color:        AppColors.bgCard,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppColors.border),
+            border:       Border.all(color: AppColors.border),
           ),
           child: Text(
             'Hal. $current / $total',
