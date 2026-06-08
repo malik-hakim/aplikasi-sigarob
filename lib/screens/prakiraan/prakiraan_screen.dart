@@ -27,16 +27,30 @@ class PrakiraanScreen extends ConsumerWidget {
       ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error:   (e, _) => ErrorView(
-          message: e.toString(),
-          onRetry: () => ref.invalidate(prakiraanProvider),
-        ),
-        data: (days) => _PrakiraanContent(days: days),
+        error: (e, st) {
+          debugPrint('Prakiraan error: $e\n$st');
+          return ErrorView(
+            message: e.toString(),
+            onRetry: () => ref.invalidate(prakiraanProvider),
+          );
+        },
+        data: (days) {
+          if (days.isEmpty) {
+            return const Center(
+              child: Text(
+                'Belum ada data prakiraan.',
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+            );
+          }
+          return _PrakiraanContent(days: days);
+        },
       ),
     );
   }
 }
 
+// ── Content ───────────────────────────────────────────────────────────────────
 class _PrakiraanContent extends StatelessWidget {
   final List<PrakiraanDay> days;
   const _PrakiraanContent({required this.days});
@@ -46,13 +60,15 @@ class _PrakiraanContent extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // ── Sumber data info ──────────────────────────────────────────────
+        // ── Info banner ───────────────────────────────────────────────
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: AppColors.infoBg,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+            border: Border.all(
+              color: AppColors.primary.withValues(alpha: 0.2),
+            ),
           ),
           child: const Row(
             children: [
@@ -69,7 +85,7 @@ class _PrakiraanContent extends StatelessWidget {
         ),
         const SizedBox(height: 16),
 
-        // ── Bar Chart ─────────────────────────────────────────────────────
+        // ── Bar Chart ─────────────────────────────────────────────────
         SigapCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,25 +96,22 @@ class _PrakiraanContent extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               SizedBox(
-                height: 180,
+                height: 200,
                 child: _WaterLevelBarChart(days: days),
               ),
             ],
           ),
         ).animate().fadeIn(duration: 400.ms),
-
         const SizedBox(height: 16),
 
-        // ── Kartu per hari ────────────────────────────────────────────────
+        // ── Kartu per hari ────────────────────────────────────────────
         ...days.asMap().entries.map((entry) {
-          final i   = entry.key;
-          final day = entry.value;
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: _DayCard(day: day)
-              .animate(delay: Duration(milliseconds: 100 * i))
-              .fadeIn(duration: 400.ms)
-              .slideY(begin: 0.1),
+            child: _DayCard(day: entry.value)
+                .animate(delay: Duration(milliseconds: 100 * entry.key))
+                .fadeIn(duration: 400.ms)
+                .slideY(begin: 0.1),
           );
         }),
 
@@ -124,22 +137,34 @@ class _WaterLevelBarChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ── Hitung maxY dengan safe fallback ─────────────────────────────
+    final values = days.map((d) => d.predictedLevelCm ?? 0.0).toList();
+
+    final maxValue = values.fold<double>(0.0, (a, b) => a > b ? a : b);
+
+    // Minimal 20cm agar chart tidak flat, margin 30% ke atas
+    final double maxY =
+        maxValue > 0 ? (maxValue * 1.3).clamp(20.0, 150.0) : 20.0;
+
+    // ── Bangun bar groups ─────────────────────────────────────────────
     final bars = days.asMap().entries.map((e) {
-      final day   = e.value;
+      final day = e.value;
       final color = AlertColors.forLevel(day.alertLevel);
-      final value = day.predictedLevelCm ?? 0;
+      final value = (day.predictedLevelCm ?? 0.0).clamp(0.0, maxY);
 
       return BarChartGroupData(
         x: e.key,
         barRods: [
           BarChartRodData(
-            toY:      value,
-            color:    color,
-            width:    40,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            toY: value,
+            color: color,
+            width: 36,
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(8),
+            ),
             backDrawRodData: BackgroundBarChartRodData(
-              show:  true,
-              toY:   100,
+              show: true,
+              toY: maxY, // ← ikuti maxY, bukan hardcode 100
               color: AppColors.border,
             ),
           ),
@@ -147,19 +172,15 @@ class _WaterLevelBarChart extends StatelessWidget {
       );
     }).toList();
 
-    final maxY = (days
-            .map((d) => d.predictedLevelCm ?? 0)
-            .fold<double>(0, (a, b) => a > b ? a : b) *
-        1.3)
-      .clamp(20.0, 120.0);
-
     return BarChart(
       BarChartData(
-        maxY:          maxY,
-        barGroups:     bars,
-        gridData:      FlGridData(
-          show:             true,
+        maxY: maxY,
+        minY: 0,
+        barGroups: bars,
+        gridData: FlGridData(
+          show: true,
           drawVerticalLine: false,
+          horizontalInterval: maxY / 4,
           getDrawingHorizontalLine: (_) => const FlLine(
             color: AppColors.border,
             strokeWidth: 1,
@@ -171,11 +192,14 @@ class _WaterLevelBarChart extends StatelessWidget {
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              getTitlesWidget: (value, _) {
+              reservedSize: 32,
+              getTitlesWidget: (value, meta) {
                 final i = value.toInt();
-                if (i < 0 || i >= days.length) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.only(top: 8),
+                if (i < 0 || i >= days.length) {
+                  return const SizedBox.shrink();
+                }
+                return SideTitleWidget(
+                  axisSide: meta.axisSide,
                   child: Text(
                     days[i].label,
                     style: AppText.label(size: 11),
@@ -187,28 +211,62 @@ class _WaterLevelBarChart extends StatelessWidget {
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              reservedSize: 36,
-              getTitlesWidget: (value, _) => Text(
-                '${value.toInt()}',
-                style: AppText.label(size: 10),
-              ),
+              reservedSize: 40,
+              interval: maxY / 4,
+              getTitlesWidget: (value, meta) {
+                // Jangan tampilkan label di luar range
+                if (value < 0 || value > maxY) {
+                  return const SizedBox.shrink();
+                }
+                return SideTitleWidget(
+                  axisSide: meta.axisSide,
+                  child: Text(
+                    value.toInt().toString(),
+                    style: AppText.label(size: 10),
+                  ),
+                );
+              },
             ),
           ),
-          topTitles:   const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
         ),
         barTouchData: BarTouchData(
+          enabled: true,
           touchTooltipData: BarTouchTooltipData(
+            getTooltipColor: (group) =>
+                AppColors.textMain.withValues(alpha: 0.85),
+            tooltipRoundedRadius: 8,
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
+              if (groupIndex < 0 || groupIndex >= days.length) return null;
+              final day = days[groupIndex];
               return BarTooltipItem(
-                '${rod.toY.toStringAsFixed(1)} cm',
-                const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                '${day.label}\n',
+                const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+                children: [
+                  TextSpan(
+                    text: '${rod.toY.toStringAsFixed(1)} cm',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w400,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               );
             },
           ),
         ),
       ),
-      swapAnimationDuration: const Duration(milliseconds: 800),
+      swapAnimationDuration: const Duration(milliseconds: 600),
       swapAnimationCurve: Curves.easeInOut,
     );
   }
@@ -234,10 +292,17 @@ class _DayCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(day.label,
-                      style: Theme.of(context).textTheme.titleSmall),
-                    Text(day.date,
-                      style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                    Text(
+                      day.label,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    Text(
+                      day.date,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -251,29 +316,29 @@ class _DayCard extends StatelessWidget {
           Row(
             children: [
               _MiniStat(
-                icon:  Icons.water_outlined,
+                icon: Icons.water_outlined,
                 label: 'Ketinggian',
                 value: day.predictedLevelCm != null
-                         ? '${day.predictedLevelCm!.toStringAsFixed(1)} cm'
-                         : '—',
+                    ? '${day.predictedLevelCm!.toStringAsFixed(1)} cm'
+                    : '—',
                 color: color,
               ),
               const SizedBox(width: 12),
               _MiniStat(
-                icon:  Icons.beach_access_outlined,
+                icon: Icons.beach_access_outlined,
                 label: 'Hujan',
                 value: day.rainfallMm != null
-                         ? '${day.rainfallMm!.toStringAsFixed(1)} mm'
-                         : '—',
+                    ? '${day.rainfallMm!.toStringAsFixed(1)} mm'
+                    : '—',
                 color: AppColors.primary,
               ),
               const SizedBox(width: 12),
               _MiniStat(
-                icon:  Icons.air,
+                icon: Icons.air,
                 label: 'Angin',
                 value: day.windSpeedKmh != null
-                         ? '${day.windSpeedKmh!.toStringAsFixed(0)} km/h'
-                         : '—',
+                    ? '${day.windSpeedKmh!.toStringAsFixed(0)} km/h'
+                    : '—',
                 color: const Color(0xFF6366F1),
               ),
             ],
@@ -288,7 +353,11 @@ class _DayCard extends StatelessWidget {
                 Text('Probabilitas banjir rob', style: AppText.label()),
                 Text(
                   '${(day.floodProbability! * 100).toStringAsFixed(0)}%',
-                  style: AppText.mono(size: 13, weight: FontWeight.w700, color: color),
+                  style: AppText.mono(
+                    size: 13,
+                    weight: FontWeight.w700,
+                    color: color,
+                  ),
                 ),
               ],
             ),
@@ -296,10 +365,10 @@ class _DayCard extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value:            day.floodProbability!,
-                backgroundColor:  color.withValues(alpha: 0.12),
-                valueColor:       AlwaysStoppedAnimation(color),
-                minHeight:        6,
+                value: day.floodProbability!.clamp(0.0, 1.0),
+                backgroundColor: color.withValues(alpha: 0.12),
+                valueColor: AlwaysStoppedAnimation(color),
+                minHeight: 6,
               ),
             ),
           ],
@@ -315,10 +384,21 @@ class _DayCard extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.cloud_outlined, size: 14, color: AppColors.textMuted),
+                  const Icon(
+                    Icons.cloud_outlined,
+                    size: 14,
+                    color: AppColors.textMuted,
+                  ),
                   const SizedBox(width: 6),
-                  Text(day.weatherDesc!,
-                    style: const TextStyle(fontSize: 12, color: AppColors.textSub)),
+                  Expanded(
+                    child: Text(
+                      day.weatherDesc!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSub,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -329,11 +409,12 @@ class _DayCard extends StatelessWidget {
   }
 }
 
+// ── Mini Stat ─────────────────────────────────────────────────────────────────
 class _MiniStat extends StatelessWidget {
   final IconData icon;
-  final String   label;
-  final String   value;
-  final Color    color;
+  final String label;
+  final String value;
+  final Color color;
 
   const _MiniStat({
     required this.icon,
@@ -357,7 +438,14 @@ class _MiniStat extends StatelessWidget {
             Icon(icon, size: 14, color: color),
             const SizedBox(height: 6),
             Text(label, style: AppText.label(size: 10)),
-            Text(value, style: AppText.mono(size: 13, weight: FontWeight.w700, color: color)),
+            Text(
+              value,
+              style: AppText.mono(
+                size: 13,
+                weight: FontWeight.w700,
+                color: color,
+              ),
+            ),
           ],
         ),
       ),
