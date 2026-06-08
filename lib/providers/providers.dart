@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/api/api_client.dart';
 import '../models/models.dart';
 
-// ── Status Provider (auto-refresh 30 detik) ───────────────────────────────────
+// ── Status Provider ───────────────────────────────────────────────────────────
 final statusProvider = FutureProvider.autoDispose<StatusData>((ref) async {
   final json = await PublicApi.getStatus();
   return StatusData.fromJson(json);
@@ -11,11 +11,14 @@ final statusProvider = FutureProvider.autoDispose<StatusData>((ref) async {
 // ── Prakiraan Provider ────────────────────────────────────────────────────────
 final prakiraanProvider = FutureProvider.autoDispose<List<PrakiraanDay>>((ref) async {
   final json = await PublicApi.getPrakiraan();
-  final days = (json['days'] as List<dynamic>?) ?? [];
+  // Server mengembalikan { days: [...], updated_at, source }
+  // Setelah interceptor unwrap envelope, json = { days, updated_at, source }
+  final raw = json['days'] ?? json['data']?['days'] ?? [];
+  final days = (raw as List<dynamic>);
   return days.map((d) => PrakiraanDay.fromJson(d as Map<String, dynamic>)).toList();
 });
 
-// ── Riwayat Provider dengan filter ───────────────────────────────────────────
+// ── Riwayat Provider ──────────────────────────────────────────────────────────
 class RiwayatParams {
   final int    page;
   final String level;
@@ -43,7 +46,7 @@ final panduanProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) a
   return PublicApi.getPanduan();
 });
 
-// ── Riwayat Sensor Provider (untuk grafik) ────────────────────────────────────
+// ── Riwayat Sensor Provider ───────────────────────────────────────────────────
 final sensorHistoryProvider = FutureProvider.autoDispose
     .family<List<SensorPoint>, int>((ref, jam) async {
   final json = await PublicApi.getRiwayatSensor(jam: jam);
@@ -53,7 +56,7 @@ final sensorHistoryProvider = FutureProvider.autoDispose
       .toList();
 });
 
-// ── Checklist Provider (local state) ─────────────────────────────────────────
+// ── Checklist Provider ────────────────────────────────────────────────────────
 final checklistProvider = StateNotifierProvider<ChecklistNotifier, List<bool>>((ref) {
   return ChecklistNotifier();
 });
@@ -72,7 +75,6 @@ class ChecklistNotifier extends StateNotifier<List<bool>> {
   int get checkedCount => state.where((v) => v).length;
 }
 
-// Item tas siaga
 const List<String> checklistItems = [
   'KTP & dokumen penting (dalam plastik kedap air)',
   'Uang tunai secukupnya',

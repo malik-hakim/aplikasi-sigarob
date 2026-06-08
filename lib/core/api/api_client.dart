@@ -1,8 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 
-// Ganti dengan URL backend Flask Anda
-const String kBaseUrl = 'http://10.34.58.64:5000/'; // ← sesuaikan
+const String kBaseUrl = 'http://10.34.58.64:5000/';
 
 class ApiClient {
   static ApiClient? _instance;
@@ -19,24 +18,24 @@ class ApiClient {
       },
     ));
 
-    // Logger (hanya di debug mode)
     assert(() {
       _dio.interceptors.add(PrettyDioLogger(
-        requestHeader: false,
-        requestBody: false,
+        requestHeader: true,
+        requestBody: true,
         responseBody: true,
         error: true,
-        compact: true,
+        compact: false,
       ));
       return true;
     }());
 
-    // Interceptor: unwrap envelope { status, data, message }
     _dio.interceptors.add(InterceptorsWrapper(
       onResponse: (response, handler) {
         final data = response.data;
         if (data is Map<String, dynamic> && data['status'] == 'success') {
-          response.data = data['data'] ?? data;
+          // Unwrap envelope: kembalikan isi 'data' saja
+          // Jika 'data' null, kembalikan map kosong bukan null
+          response.data = data['data'] ?? <String, dynamic>{};
         }
         handler.next(response);
       },
@@ -47,11 +46,9 @@ class ApiClient {
   }
 
   static ApiClient get instance => _instance ??= ApiClient._();
-
   Dio get dio => _dio;
 }
 
-// ── Helper untuk GET publik ───────────────────────────────────────────────────
 class PublicApi {
   static final _dio = ApiClient.instance.dio;
 
@@ -84,8 +81,10 @@ class PublicApi {
   }
 
   static Future<Map<String, dynamic>> getRiwayatSensor({int jam = 24}) async {
-    final res = await _dio
-        .get('/api/public/riwayat-sensor', queryParameters: {'jam': jam});
+    final res = await _dio.get(
+      '/api/public/riwayat-sensor',
+      queryParameters: {'jam': jam},
+    );
     return res.data as Map<String, dynamic>;
   }
 }
